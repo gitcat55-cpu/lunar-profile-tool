@@ -1,0 +1,102 @@
+name: Build Linux App
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── Install dependencies ───────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter==5.2.2 pyinstaller
+          # في حال كان لديك ملف requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # ── Install system libraries needed by CustomTkinter / Tk ─────────────
+      - name: Install system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-tk \
+            libglib2.0-0 \
+            libsm6 \
+            libxext6 \
+            libxrender-dev \
+            libxcb1 \
+            libx11-6
+
+      # ── Build with PyInstaller ─────────────────────────────────────────────
+      - name: Build binary with PyInstaller
+        run: |
+          pyinstaller \
+            --onefile \
+            --name "flaxon-account" \
+            --clean \
+            --noconfirm \
+            --hidden-import customtkinter \
+            --collect-all customtkinter \
+            src/main.py
+
+      # ── Make binary executable ─────────────────────────────────────────────
+      - name: Set permissions
+        run: chmod +x dist/flaxon-account
+
+      # ── Package as ZIP for release ─────────────────────────────────────────
+      - name: Package release ZIP
+        run: |
+          mkdir -p release
+          cp dist/flaxon-account release/
+          cp README.md release/ 2>/dev/null || true
+          cd release
+          zip -r ../flaxon-account-linux.zip .
+
+      # ── Upload build artifact ──────────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaxon-account-linux
+          # تم التعديل لرفع ملف الـ ZIP مباشرة ليكون متوافقاً مع الـ Release
+          path: flaxon-account-linux.zip
+          retention-days: 30
+
+      # ── Update GitHub Release with ZIP ─────────────────────────────────────
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Flaxon Account Manager – Latest Build"
+          body: |
+            ## Flaxon Account Manager
+            Automated build from commit `${{ github.sha }}`.
+
+            ### How to run on Linux
+            ```bash
+            unzip flaxon-account-linux.zip
+            chmod +x flaxon-account
+            ./flaxon-account
+            ```
+            > Requires Lunar Client (Flatpak or native) to be installed first.
+          files: flaxon-account-linux.zip
+          draft: false
+          prerelease: false
+          # هذا السطر ضروري لتحديث الإصدار بدلاً من محاولة إنشاء واحد جديد يتعارض معه
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
