@@ -1,0 +1,121 @@
+name: Build Linux App
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── Download & extract the app ZIP ────────────────────────────────────
+      - name: Download app ZIP
+        run: |
+          curl -L \
+            "https://github.com/${{ github.repository }}/releases/download/source/flaxon-account.zip" \
+            -o flaxon-account.zip || echo "No pre-built ZIP found, using repo source."
+
+      - name: Extract ZIP (if downloaded)
+        run: |
+          if [ -f flaxon-account.zip ]; then
+            unzip -o flaxon-account.zip -d extracted/
+            cp -r extracted/* . 2>/dev/null || true
+          fi
+
+      # ── Install dependencies ───────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install customtkinter==5.2.2 pyinstaller
+
+      # ── Install system libraries needed by CustomTkinter / Tk ─────────────
+      - name: Install system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-tk \
+            libglib2.0-0 \
+            libsm6 \
+            libxext6 \
+            libxrender-dev \
+            libxcb1 \
+            libx11-6
+
+      # ── Build with PyInstaller ─────────────────────────────────────────────
+      - name: Build binary with PyInstaller
+        run: |
+          pyinstaller \
+            --onefile \
+            --name "flaxon-account" \
+            --clean \
+            --noconfirm \
+            --hidden-import customtkinter \
+            --collect-all customtkinter \
+            src/main.py
+
+      # ── Make binary executable ─────────────────────────────────────────────
+      - name: Set permissions
+        run: chmod +x dist/flaxon-account
+
+      # ── Package as ZIP for release ─────────────────────────────────────────
+      - name: Package release ZIP
+        run: |
+          mkdir -p release
+          cp dist/flaxon-account release/
+          cp README.md release/ 2>/dev/null || true
+          cd release
+          zip -r ../flaxon-account-linux.zip .
+
+      # ── Upload build artifact ──────────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaxon-account-linux
+          path: dist/flaxon-account
+          retention-days: 30
+
+      # ── Create or update GitHub Release with ZIP ───────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Flaxon Account Manager – Latest Build"
+          body: |
+            ## Flaxon Account Manager
+            Automated build from commit `${{ github.sha }}`.
+
+            ### How to run on Linux
+            ```bash
+            chmod +x flaxon-account
+            ./flaxon-account
+            ```
+            > Requires Lunar Client (Flatpak or native) to be installed first.
+          files: flaxon-account-linux.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Commit source code into the repository ─────────────────────────────
+      - name: Commit source files to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/ requirements.txt build.sh README.md || true
+          git diff --cached --quiet || git commit -m "chore: sync source [skip ci]"
+          git push || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
